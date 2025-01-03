@@ -5,6 +5,7 @@ const userRoute = require("./routes/user");
 const categoryRoute = require("./routes/category");
 const productRoute = require("./routes/product");
 const cart = require("./routes/cart");
+
 const app = express();
 
 app.use(cors());

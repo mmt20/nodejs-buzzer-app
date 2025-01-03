@@ -9,6 +9,25 @@ const checkRole = require("../services/checkRole");
 const firebaseAdmin = require("../firebase");
 const router = express.Router();
 
+// Firebase Client SDK setup
+const firebase = require("firebase/app");
+require("firebase/auth");
+
+// Firebase configuration (from Firebase Console)
+const firebaseConfig = {
+  apiKey: "AIzaSyBsEuHV6IcjLZxynSpH8IAU8hAIGbqb8Ek",
+  authDomain: "test-otp-ff317.firebaseapp.com",
+  projectId: "test-otp-ff317",
+  storageBucket: "test-otp-ff317.firebasestorage.app",
+  messagingSenderId: "988869018980",
+  appId: "1:988869018980:web:82efa0e2049c29b7616671",
+};
+
+// Initialize Firebase
+if (!firebase.apps || !firebase.apps.length) {
+  firebase.initializeApp(firebaseConfig);
+}
+
 // Signup Route
 router.post("/signup", (req, res) => {
   const user = req.body;
@@ -263,72 +282,105 @@ router.post("/changePassword", auth.authenticateToken, (req, res) => {
   });
 });
 
-// Send OTP Route
+// Send OTP via SMS Route
 router.post("/sendOtp", async (req, res) => {
   try {
     const { phoneNumber } = req.body;
 
-    if (!phoneNumber) {
+    // Validate phone number format
+    if (!phoneNumber || !phoneNumber.startsWith("+")) {
       return res.status(400).json({
         success: false,
-        message: "Phone number is required",
+        message:
+          "Phone number must be in international format (e.g., +1234567890)",
       });
     }
 
-  
+    // Generate a random 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000);
 
-    return res.status(200).json({
-      success: true,
-      message: "Authentication token created",
-      token: customToken,
+    // Send OTP via SMS using Twilio
+    await twilioClient.messages.create({
+      body: `Your OTP for Buzzer Restaurant is: ${otp}`,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: phoneNumber,
+    });
+
+    // Save the OTP in the database (for verification later)
+    const updateQuery = "UPDATE user SET otp = ? WHERE contactNumber = ?";
+    connection.query(updateQuery, [otp, phoneNumber], (err, results) => {
+      if (err) {
+        return res
+          .status(500)
+          .json({ error: "Internal Server Error", details: err });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "OTP sent successfully",
+      });
     });
   } catch (error) {
     console.error("Error in sendOtp:", error);
     return res.status(500).json({
       success: false,
-      message: "Failed to initiate OTP process",
+      message: "Failed to send OTP",
       error: error.message,
     });
-  }
-});
-
-
-// Send OTP Route
-router.post("/sendOtp", async (req, res) => {
-  try {
-    const { phoneNumber } = req.body;
-
-    if (!phoneNumber) {
-      return res.status(400).json({ success: false, message: "Phone number is required" });
-    }
-
-    // Create a custom token for phone authentication
-    const customToken = await admin.auth().createCustomToken(phoneNumber);
-
-    return res.status(200).json({ success: true, message: "Authentication token created", token: customToken });
-  } catch (error) {
-    console.error("Error in sendOtp:", error);
-    return res.status(500).json({ success: false, message: "Failed to initiate OTP process", error: error.message });
   }
 });
 
 // Verify OTP Route
 router.post("/verifyOtp", async (req, res) => {
   try {
-    const { idToken } = req.body;
+    const { phoneNumber, otp } = req.body;
 
-    if (!idToken) {
-      return res.status(400).json({ success: false, message: "ID token is required" });
+    // Validate phone number format
+    if (!phoneNumber || !phoneNumber.startsWith("+")) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Phone number must be in international format (e.g., +1234567890)",
+      });
     }
 
-    // Verify the ID token
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    // Check if the OTP matches the one stored in the database
+    const checkOtpQuery =
+      "SELECT * FROM user WHERE contactNumber = ? AND otp = ?";
+    connection.query(checkOtpQuery, [phoneNumber, otp], (err, results) => {
+      if (err) {
+        return res
+          .status(500)
+          .json({ error: "Internal Server Error", details: err });
+      }
 
-    return res.status(200).json({ success: true, message: "OTP verified successfully", user: decodedToken });
+      if (results.length === 0) {
+        return res.status(400).json({ success: false, message: "Invalid OTP" });
+      }
+
+      // Clear the OTP from the database after successful verification
+      const clearOtpQuery =
+        "UPDATE user SET otp = NULL WHERE contactNumber = ?";
+      connection.query(clearOtpQuery, [phoneNumber], (clearErr) => {
+        if (clearErr) {
+          return res
+            .status(500)
+            .json({ error: "Internal Server Error", details: clearErr });
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: "OTP verified successfully",
+        });
+      });
+    });
   } catch (error) {
     console.error("Error in verifyOtp:", error);
-    return res.status(500).json({ success: false, message: "Failed to verify OTP", error: error.message });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to verify OTP",
+      error: error.message,
+    });
   }
 });
-
 module.exports = router;
